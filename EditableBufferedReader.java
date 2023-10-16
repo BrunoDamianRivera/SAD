@@ -1,84 +1,116 @@
-package bufferedreader;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
 
 public class EditableBufferedReader extends BufferedReader {
- public static final int ESC_KEY = 27;
-    public static final int SPACE_KEY = 32;
-    public static final int BACKSPACE_KEY = 8;
-    public static final int DELETE_KEY = 127;
-    public static final int LEFT_ARROW_KEY = 68;
-    public static final int RIGHT_ARROW_KEY = 67;
-    public static final int BRACKET_KEY = 91;
-    public static final int CR_KEY = 13;
 
-    public EditableBufferedReader(Reader reader) {
-        super(reader);
-        enableRawMode();
+    private static final int RIGHT_ARROW = 1000;
+    private static final int LEFT_ARROW = 1001;
+    private static final int HOME = 1002;
+    private static final int END = 1003;
+    private static final int INSERT_MODE = 1004;
+    private static final int DELETE = 1005;
+    private static final int BACKSPACE = 1006;
+
+    private Line line;
+
+    public EditableBufferedReader(Reader in, Line line) {
+        super(in);
+        this.line = line;
     }
 
-    public void enableRawMode() {
-        try {
-            String[] cmd = { "/bin/sh", "-c", "stty -echo raw </dev/tty" };
-            Runtime.getRuntime().exec(cmd).waitFor();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    public void setRaw() {
+        executeCommand("stty -echo raw </dev/tty");
     }
 
-    public void disableRawMode() {
+    public void unsetRaw() {
+        executeCommand("stty echo cooked </dev/tty");
+    }
+
+    private void executeCommand(String command) {
         try {
-            String[] cmd = { "/bin/sh", "-c", "stty echo cooked </dev/tty" };
+            String[] cmd = {"/bin/sh", "-c", command};
             Runtime.getRuntime().exec(cmd).waitFor();
-        } catch (Exception e) {
+        } catch (IOException | InterruptedException e) {
             e.printStackTrace();
         }
     }
 
     @Override
     public int read() throws IOException {
-        int character = super.read();
-
-        if (character == ESC_KEY) {
-            int c1 = super.read();
-            int c2 = super.read();
-
-            if (c1 == BRACKET_KEY) {
-                if (c2 == LEFT_ARROW_KEY) {
-                    System.out.print("\033[D");
-                } else if (c2 == RIGHT_ARROW_KEY) {
-                    System.out.print("\033[C");
-                }
-            }
-        } else if (character == DELETE_KEY || character == BACKSPACE_KEY) {
-            System.out.print("\b \b");
+        int readChar = super.read();
+        if (readChar == 27) {
+            return handleEscapeSequence();
+        } else if (readChar == 127) {
+            return BACKSPACE;
+        }else if (readChar == 9){ //Ctrl + I
+            return INSERT_MODE;
         }
+        return readChar;
+    }
 
-        return character;
+    private int handleEscapeSequence() throws IOException {
+        super.read(); // discard
+        int command = super.read();
+        switch (command) {
+            case 67:
+                return RIGHT_ARROW;
+            case 68:
+                return LEFT_ARROW;
+            case 65:
+                return HOME;
+            case 66:
+                return END;
+            case 50:
+                super.read();
+                return INSERT_MODE;
+            case 51:
+                super.read();
+                return DELETE;
+            default:
+                return -1;
+        }
     }
 
     @Override
     public String readLine() throws IOException {
-        StringBuilder stringBuilder = new StringBuilder();
-        int character;
-
-        while ((character = read()) != -1 && character != '\n') {
-            if (character == DELETE_KEY || character == BACKSPACE_KEY) {
-                if (stringBuilder.length() > 0) {
-                    stringBuilder.deleteCharAt(stringBuilder.length() - 1);
-                }
-            } else if (character == CR_KEY) {
-                System.out.print("\r\n");
-                break;
-            } else {
-                System.out.print((char) character);
-                stringBuilder.append((char) character);
+        setRaw();
+        int intRead;
+        while (true) {
+            intRead = read();
+            handleKeyInput(intRead);
+            if (intRead == '\r' || intRead == '\n') {
+                unsetRaw();
+                return line.getLineContent();
             }
         }
-        disableRawMode();
+    }
 
-        return stringBuilder.toString();
+    private void handleKeyInput(int key) {
+        switch (key) {
+            case RIGHT_ARROW:
+                line.moveCursorRight();
+                break;
+            case LEFT_ARROW:
+                line.moveCursorLeft();
+                break;
+            case HOME:
+                line.setCursorPosition(0);
+                break;
+            case END:
+                line.setCursorPosition(line.getLineContent().length());
+                break;
+            case INSERT_MODE:
+                line.toggleInsertMode();
+                break;
+            case DELETE:
+                line.removeCharacterAt(line.getCursorPosition());
+                break;
+            case BACKSPACE:
+                line.removeCharacterAt(line.getCursorPosition() - 1);
+                break;
+            default:
+                line.addCharacterAt(line.getCursorPosition(), (char) key);
+        }
     }
 }
